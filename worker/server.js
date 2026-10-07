@@ -261,6 +261,25 @@ app.post("/render-youtube", async (req, res) => {
   });
 });
 
+app.get("/test-cobalt-fixed", async (req, res) => {
+  const url = String(process.env.TEST_YOUTUBE_URL || "").trim();
+  if (!isYouTubeUrl(url)) return res.status(500).json({ ok: false, error: "TEST_YOUTUBE_URL is not configured" });
+  const base = String(process.env.COBALT_URL || "").trim().replace(/\/$/, "");
+  if (!base) return res.status(500).json({ ok: false, error: "COBALT_URL is not configured" });
+  try {
+    const response = await fetch(base + "/", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ url, downloadMode: "auto", videoQuality: "1080", youtubeVideoCodec: "h264", youtubeVideoContainer: "mp4", alwaysProxy: true }),
+      signal: AbortSignal.timeout(120000)
+    });
+    const payload = await response.json().catch(() => null);
+    res.status(200).json({ ok: response.ok, httpStatus: response.status, payload });
+  } catch (error) {
+    res.status(200).json({ ok: false, error: String(error) });
+  }
+});
+
 app.get("/test-cobalt", async (req, res) => {
   const url = String(req.query?.url || "").trim();
   if (!isYouTubeUrl(url)) return res.status(400).json({ ok: false, error: "valid YouTube URL is required" });
