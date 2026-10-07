@@ -1,32 +1,48 @@
-# AutoShorts — ClipShlip Releases
+# ClipShlip-Releases — AutoShorts
 
-This repository is a fork of **Ai-Haris/ClipShlip-Releases**.
+A production-oriented web foundation for turning long videos into vertical Shorts.
 
-## AutoShorts direction
+## Current build
 
-A local-first short-video workflow built around the ClipShlip release lineage:
-
-- long-video input
-- candidate clip detection and scoring
-- transcript-aware selection
-- 9:16 / 1080×1920 preparation
-- caption timing
-- MP4 export
-- local worker / FFmpeg integration
-
-## Current state
-
-The repository now contains an initial AutoShorts web foundation with a responsive upload/workflow UI.
-
-The actual video-processing engine is intentionally kept separate until the upstream source/license and release artifacts are available. No unavailable upstream source code has been fabricated or copied.
+- Responsive AutoShorts interface
+- Local video-file selection
+- 9:16 / 1080×1920 target
+- Vite production build
+- GitHub Pages deployment on every push to `main`
+- Processing architecture kept separate from the UI so the real video engine can be added without replacing the interface
 
 ## Development
 
 ```bash
 npm install
 npm run dev
+npm run build
+npm run preview
 ```
+
+## GitHub Pages
+
+The project is configured for the repository path:
+
+`/ClipShlip-Releases/`
+
+The workflow in `.github/workflows/deploy-pages.yml` builds and deploys automatically.
+
+## Processing engine
+
+The web shell does not pretend to contain an upstream ClipShlip processing engine when that source is not present in this fork. The next implementation layer can add a local FFmpeg/worker pipeline for:
+
+1. full-video analysis
+2. candidate segment detection
+3. clip scoring
+4. transcript-aware selection
+5. face/speaker-aware reframing
+6. 9:16 rendering
+7. timed captions
+8. MP4 export
+
+Any upstream code or release assets must retain their original license and notices; verify the upstream license before reusing source code.
 
 ## License
 
-Keep all upstream ClipShlip license and attribution notices intact. New AutoShorts code should receive an explicit license after the upstream source license is verified.
+See the upstream project and release notices for applicable licensing. Do not remove upstream attribution.
