@@ -66,10 +66,10 @@ function cleanup(...files) {
   for (const file of files) fs.rmSync(file, { force: true });
 }
 
-function renderArgs(input, output, duration) {
+function renderArgs(input, output, duration, start = 0) {
   return [
     "-hide_banner", "-loglevel", "error",
-    "-i", input, "-t", String(duration),
+    "-ss", String(start), "-i", input, "-t", String(duration),
     "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
     "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
@@ -83,7 +83,7 @@ app.get("/health", (_req, res) => res.json({
   ffmpeg: "available",
   youtube: "best-effort",
   selfTest,
-  version: "1.5.0"
+  version: "1.5.1"
 }));
 
 // Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
@@ -245,7 +245,7 @@ app.post("/render-youtube", async (req, res) => {
     });
   }
 
-  const rendered = await run("ffmpeg", renderArgs(source, output, duration), 10 * 60 * 1000);
+  const rendered = await run("ffmpeg", renderArgs(source, output, duration, start), 10 * 60 * 1000);
   cleanup(source);
   if (!rendered.ok) {
     cleanup(output);
