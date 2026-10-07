@@ -83,7 +83,7 @@ app.get("/health", (_req, res) => res.json({
   ffmpeg: "available",
   youtube: "best-effort",
   selfTest,
-  version: "1.5.2"
+  version: "1.5.3"
 }));
 
 // Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
@@ -286,7 +286,8 @@ app.get("/test-youtube", async (req, res) => {
   const id = crypto.randomUUID();
   const source = path.join(root, id + "-source.mp4");
   const output = path.join(root, id + ".mp4");
-  const downloaded = await downloadYouTube(url, source, 0, 10);
+  const cobalt = await downloadViaCobalt(url, source, 0, 10);
+  const downloaded = cobalt.ok ? cobalt : await downloadYouTube(url, source, 0, 10);
   if (!downloaded.ok) {
     cleanup(source, output);
     return res.status(502).json({ ok: false, stage: "youtube-download", code: "YOUTUBE_INGEST_BLOCKED", detail: downloaded.diagnostics.slice(-8000) });
