@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: autoshorts-worker
+    runtime: docker
+    dockerfilePath: ./worker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: WORKER_ALLOWED_ORIGIN
+        value: "*"
