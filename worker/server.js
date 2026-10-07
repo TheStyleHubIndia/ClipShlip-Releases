@@ -83,7 +83,7 @@ app.get("/health", (_req, res) => res.json({
   ffmpeg: "available",
   youtube: "best-effort",
   selfTest,
-  version: "1.3.1"
+  version: "1.4.0"
 }));
 
 // Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
@@ -158,16 +158,16 @@ async function downloadYouTube(url, source, start, end) {
     "-o", source, url
   ];
   const clients = [
+    "android_vr",
+    "tv",
     "web_embedded",
-    "web_safari",
-    "android",
-    "web"
+    "web_safari"
   ];
   let diagnostics = "";
   for (const client of clients) {
     cleanup(source);
     const args = [...common, "--extractor-args", `youtube:player_client=${client}`];
-    const result = await run("yt-dlp", args, 8 * 60 * 1000);
+    const result = await run("yt-dlp", args, 90000);
     diagnostics += `[client ${client}]\n${result.stderr.slice(-3500)}\n`;
     if (result.ok && fs.existsSync(source) && fs.statSync(source).size > 10000) {
       return { ok: true, diagnostics };
