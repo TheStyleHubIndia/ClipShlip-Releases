@@ -34,7 +34,7 @@ app.get("/health", (_req, res) => res.json({
 
 app.get("/test-youtube", async (req, res) => {
   const url = String(req.query?.url || "").trim();
-  if (!/^https?:\\/\\/(www\\.)?(youtube\\.com|youtu\\.be)\\//i.test(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
+  let parsed; try { parsed = new URL(url); } catch { return res.status(400).json({ error: "valid YouTube URL is required" }); } if (!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(parsed.hostname.toLowerCase())) return res.status(400).json({ error: "valid YouTube URL is required" });
   const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
   const cleanup = () => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); };
   const fail = (stage, detail="") => { cleanup(); if(!res.headersSent) res.status(500).json({ok:false,stage,detail:detail.slice(-4000)}); };
