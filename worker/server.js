@@ -68,7 +68,6 @@ app.get("/test-youtube", async (req, res) => {
       if(!valid) return res.status(500).json({ok:false,stage:"output-validation",bytes});
       res.json({ok:true,clip:"10s",width:1080,height:1920,bytes,format:"mp4"});
     });
-  });
 });
 
 app.post("/render-youtube", express.json(), async (req, res) => {
