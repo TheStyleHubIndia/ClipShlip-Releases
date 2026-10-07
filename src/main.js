@@ -41,7 +41,7 @@ const input=document.querySelector("#videoInput"), choose=document.querySelector
 const fileName=document.querySelector("#fileName"), results=document.querySelector("#results"), candidateList=document.querySelector("#candidateList");
 const meta=document.querySelector("#meta"), status=document.querySelector("#status"), workerUrl=document.querySelector("#workerUrl"), youtubeUrl=document.querySelector("#youtubeUrl"), youtubeTest=document.querySelector("#youtubeTest");
 
-const configuredWorker = import.meta.env.VITE_WORKER_URL?.trim().replace(/\/$/,"") || "https://autoshorts-worker.onrender.com";
+const configuredWorker = import.meta.env.VITE_WORKER_URL?.trim().replace(/\/$/,"") || "https://autoshorts-worker-production.up.railway.app";
 workerUrl.value=localStorage.getItem("autoshorts_worker_url")||configuredWorker;
 workerUrl.addEventListener("input",()=>localStorage.setItem("autoshorts_worker_url",workerUrl.value.trim()));
 async function checkWorker(url){ try { const r=await fetch(`${url}/health`); return r.ok; } catch { return false; } }
