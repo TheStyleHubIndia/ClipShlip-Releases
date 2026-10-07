@@ -18,6 +18,7 @@ app.use(cors({
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"]
 }));
+app.use(express.json({ limit: "1mb" }));
 app.disable("x-powered-by");
 
 const upload = multer({
@@ -25,106 +26,215 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }
 });
 
+const YT_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"]);
+const mobileUA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36";
+
+function isYouTubeUrl(value) {
+  try {
+    const u = new URL(value);
+    return ["http:", "https:"].includes(u.protocol) && YT_HOSTS.has(u.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function run(command, args, timeoutMs = 10 * 60 * 1000) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args);
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    child.stdout?.on("data", c => { stdout += c.toString(); });
+    child.stderr?.on("data", c => { stderr += c.toString(); });
+    child.on("error", e => finish({ ok: false, code: -1, stdout, stderr: String(e) }));
+    child.on("close", code => finish({ ok: code === 0, code, stdout, stderr }));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({ ok: false, code: -1, stdout, stderr: stderr + "\nprocess timeout" });
+    }, timeoutMs);
+    if (timer.unref) timer.unref();
+  });
+}
+
+function cleanup(...files) {
+  for (const file of files) fs.rmSync(file, { force: true });
+}
+
+function renderArgs(input, output, duration) {
+  return [
+    "-hide_banner", "-loglevel", "error",
+    "-i", input, "-t", String(duration),
+    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+    "-y", output
+  ];
+}
+
 app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "autoshorts-worker",
   ffmpeg: "available",
-  version: "1.1.1"
+  youtube: "best-effort",
+  version: "1.2.0"
 }));
 
-app.get("/test-youtube", async (req, res) => {
-  const url = String(req.query?.url || "").trim();
-  let parsed; try { parsed = new URL(url); } catch { return res.status(400).json({ error: "valid YouTube URL is required" }); } if (!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(parsed.hostname.toLowerCase())) return res.status(400).json({ error: "valid YouTube URL is required" });
-  const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
-  const cleanup = () => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); };
-  const fail = (stage, detail="") => { cleanup(); if(!res.headersSent) res.status(500).json({ok:false,stage,detail:detail.slice(-4000)}); };
-  const clients = ["web_embedded,web,tv","web_safari,web_embedded","android,web_safari"];
-  let ds = "";
-  let downloaded = false;
-  for (let attempt = 0; attempt < 2 && !downloaded; attempt++) {
-    for (const client of clients) {
-      const args = ["--no-playlist","--js-runtimes","node","--remote-components","ejs:github","--extractor-args",`youtube:player_client=${client}`,"--user-agent","Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36","--force-ipv4","--retries","2","--fragment-retries","2","--sleep-requests","1","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections","*0-10","--force-keyframes-at-cuts","-o",source,url];
-      const result = await new Promise(resolve => {
-        const dl = spawn("yt-dlp", args);
-        let err = "";
-        dl.stderr.on("data", c => { err += c.toString(); });
-        dl.on("error", e => resolve({ok:false, detail:String(e)}));
-        dl.on("close", code => resolve({ok:code === 0, detail:err}));
-      });
-      ds += `[attempt ${attempt + 1} client ${client}]\n${result.detail || ""}\n`;
-      if (result.ok && fs.existsSync(source) && fs.statSync(source).size > 10000) { downloaded = true; break; }
-      fs.rmSync(source,{force:true});
-    }
+// Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
+// without depending on YouTube or any external network.
+app.get("/test-render", async (_req, res) => {
+  const id = crypto.randomUUID();
+  const output = path.join(root, id + ".mp4");
+  const result = await run("ffmpeg", [
+    "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
+    "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000",
+    "-t", "5",
+    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+    "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
+    "-y", output
+  ], 120000);
+  if (!result.ok) {
+    cleanup(output);
+    return res.status(500).json({ ok: false, stage: "ffmpeg", detail: result.stderr.slice(-3000) });
   }
-  if (!downloaded) return fail("youtube-download",ds);
-    const ff = spawn("ffmpeg",["-hide_banner","-loglevel","error","-i",source,"-t","10","-vf","scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920","-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output]);
-    let fsErr=""; ff.stderr.on("data",c=>{fsErr+=c.toString();});
-    ff.on("error",()=>fail("ffmpeg-start",fsErr));
-    ff.on("close",code2=>{
-      if(code2!==0) return fail("render",fsErr);
-      let bytes=0; try { bytes=fs.statSync(output).size; } catch {}
-      const valid=bytes>10000;
-      cleanup();
-      if(!valid) return res.status(500).json({ok:false,stage:"output-validation",bytes});
-      res.json({ok:true,clip:"10s",width:1080,height:1920,bytes,format:"mp4"});
-    });
-});
-
-app.post("/render-youtube", express.json(), async (req, res) => {
-  const url = String(req.body?.url || "").trim();
-  const start = Number(req.body?.start ?? 0);
-  const end = Number(req.body?.end ?? 30);
-  const duration = end - start;
-  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || duration <= 0 || duration > 180) return res.status(400).json({ error: "invalid clip range (max 180 seconds)" });
-  const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
-  const dlArgs = [
-    "--no-playlist",
-    "--no-js-runtimes",
-    "--js-runtimes","node",
-    "--remote-components","ejs:github",
-    "-f","bv*+ba/b",
-    "--merge-output-format","mp4",
-    "--download-sections",`*${start}-${end}`,
-    "--force-keyframes-at-cuts",
-    "-o",source,url
-  ];
-  const dl = spawn("yt-dlp", dlArgs);
-  let stderr = ""; dl.stderr.on("data", c => { stderr += c.toString(); });
-  const fail = (msg, detail="") => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); if(!res.headersSent) res.status(500).json({error:msg,detail:detail.slice(-4000)}); };
-  dl.on("error", () => fail("yt-dlp could not start"));
-  dl.on("close", code => {
-    if (code !== 0) return fail("YouTube download failed", stderr);
-    const filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920";
-    const ffmpeg = spawn("ffmpeg", ["-hide_banner","-loglevel","error","-i",source,"-t",String(duration),"-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output]);
-    let ferr=""; ffmpeg.stderr.on("data", c => { ferr += c.toString(); });
-    ffmpeg.on("error", () => fail("FFmpeg could not start", ferr));
-    ffmpeg.on("close", code2 => {
-      fs.rmSync(source,{force:true});
-      if(code2!==0) return fail("render failed",ferr);
-      res.download(output,"autoshorts-youtube-1080x1920.mp4",err=>{fs.rmSync(output,{force:true});if(err&&!res.headersSent)res.status(500).end();});
-    });
-  });
+  let bytes = 0;
+  try { bytes = fs.statSync(output).size; } catch {}
+  cleanup(output);
+  if (bytes <= 10000) return res.status(500).json({ ok: false, stage: "output-validation", bytes });
+  res.json({ ok: true, clip: "synthetic-5s", width: 1080, height: 1920, bytes, format: "mp4" });
 });
 
 app.post("/render", upload.single("video"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video file is required" });
-  const start = Number(req.body.start ?? 0), end = Number(req.body.end ?? 30), duration = end - start;
+  const start = Number(req.body.start ?? 0);
+  const end = Number(req.body.end ?? 30);
+  const duration = end - start;
   if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || duration <= 0 || duration > 180) {
-    fs.rmSync(req.file.path, { force: true });
+    cleanup(req.file.path);
     return res.status(400).json({ error: "invalid clip range (max 180 seconds)" });
   }
-  const id = crypto.randomUUID(), output = path.join(root, `${id}.mp4`);
-  const filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920";
-  const args = ["-hide_banner","-loglevel","error","-ss",String(start),"-i",req.file.path,"-t",String(duration),"-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output];
-  const ffmpeg = spawn("ffmpeg", args);
-  let stderr = ""; ffmpeg.stderr.on("data", chunk => { stderr += chunk.toString(); });
-  ffmpeg.on("error", () => { fs.rmSync(req.file.path,{force:true}); if(!res.headersSent) res.status(500).json({error:"FFmpeg is not installed or could not start"}); });
-  ffmpeg.on("close", code => {
-    fs.rmSync(req.file.path,{force:true});
-    if(code!==0){fs.rmSync(output,{force:true});return res.status(500).json({error:"render failed",detail:stderr.slice(-2000)});}
-    res.download(output,"autoshorts-1080x1920.mp4",err=>{fs.rmSync(output,{force:true});if(err&&!res.headersSent)res.status(500).end();});
+  const output = path.join(root, crypto.randomUUID() + ".mp4");
+  const result = await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", String(start), "-i", req.file.path, "-t", String(duration),
+    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-y", output
+  ], 10 * 60 * 1000);
+  cleanup(req.file.path);
+  if (!result.ok) {
+    cleanup(output);
+    return res.status(500).json({ error: "render failed", detail: result.stderr.slice(-3000) });
+  }
+  if (!fs.existsSync(output) || fs.statSync(output).size <= 10000) {
+    cleanup(output);
+    return res.status(500).json({ error: "render produced an invalid MP4" });
+  }
+  res.download(output, "autoshorts-1080x1920.mp4", err => {
+    cleanup(output);
+    if (err && !res.headersSent) res.status(500).end();
   });
+});
+
+async function downloadYouTube(url, source, start, end) {
+  const common = [
+    "--no-playlist",
+    "--js-runtimes", "node",
+    "--remote-components", "ejs:github",
+    "--user-agent", mobileUA,
+    "--force-ipv4",
+    "--retries", "2",
+    "--fragment-retries", "2",
+    "--sleep-requests", "1",
+    "-f", "bv*+ba/b",
+    "--merge-output-format", "mp4",
+    "--download-sections", `*${start}-${end}`,
+    "--force-keyframes-at-cuts",
+    "-o", source, url
+  ];
+  const clients = [
+    "web_embedded",
+    "web_safari",
+    "android",
+    "web"
+  ];
+  let diagnostics = "";
+  for (const client of clients) {
+    cleanup(source);
+    const args = [...common, "--extractor-args", `youtube:player_client=${client}`];
+    const result = await run("yt-dlp", args, 8 * 60 * 1000);
+    diagnostics += `[client ${client}]\n${result.stderr.slice(-3500)}\n`;
+    if (result.ok && fs.existsSync(source) && fs.statSync(source).size > 10000) {
+      return { ok: true, diagnostics };
+    }
+  }
+  return { ok: false, diagnostics };
+}
+
+app.post("/render-youtube", async (req, res) => {
+  const url = String(req.body?.url || "").trim();
+  const start = Number(req.body?.start ?? 0);
+  const end = Number(req.body?.end ?? 30);
+  const duration = end - start;
+  if (!isYouTubeUrl(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || duration <= 0 || duration > 180) {
+    return res.status(400).json({ error: "invalid clip range (max 180 seconds)" });
+  }
+
+  const id = crypto.randomUUID();
+  const source = path.join(root, id + "-source.mp4");
+  const output = path.join(root, id + ".mp4");
+  const downloaded = await downloadYouTube(url, source, start, end);
+  if (!downloaded.ok) {
+    cleanup(source, output);
+    return res.status(502).json({
+      error: "YouTube download blocked or unavailable from this worker",
+      code: "YOUTUBE_INGEST_BLOCKED",
+      detail: downloaded.diagnostics.slice(-8000)
+    });
+  }
+
+  const rendered = await run("ffmpeg", renderArgs(source, output, duration), 10 * 60 * 1000);
+  cleanup(source);
+  if (!rendered.ok) {
+    cleanup(output);
+    return res.status(500).json({ error: "render failed", detail: rendered.stderr.slice(-3000) });
+  }
+  if (!fs.existsSync(output) || fs.statSync(output).size <= 10000) {
+    cleanup(output);
+    return res.status(500).json({ error: "render produced an invalid MP4" });
+  }
+  res.download(output, "autoshorts-youtube-1080x1920.mp4", err => {
+    cleanup(output);
+    if (err && !res.headersSent) res.status(500).end();
+  });
+});
+
+app.get("/test-youtube", async (req, res) => {
+  const url = String(req.query?.url || "").trim();
+  if (!isYouTubeUrl(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
+  const id = crypto.randomUUID();
+  const source = path.join(root, id + "-source.mp4");
+  const output = path.join(root, id + ".mp4");
+  const downloaded = await downloadYouTube(url, source, 0, 10);
+  if (!downloaded.ok) {
+    cleanup(source, output);
+    return res.status(502).json({ ok: false, stage: "youtube-download", code: "YOUTUBE_INGEST_BLOCKED", detail: downloaded.diagnostics.slice(-8000) });
+  }
+  const rendered = await run("ffmpeg", renderArgs(source, output, 10), 10 * 60 * 1000);
+  cleanup(source);
+  if (!rendered.ok) {
+    cleanup(output);
+    return res.status(500).json({ ok: false, stage: "render", detail: rendered.stderr.slice(-3000) });
+  }
+  let bytes = 0;
+  try { bytes = fs.statSync(output).size; } catch {}
+  cleanup(output);
+  if (bytes <= 10000) return res.status(500).json({ ok: false, stage: "output-validation", bytes });
+  res.json({ ok: true, clip: "10s", width: 1080, height: 1920, bytes, format: "mp4" });
 });
 
 const port = Number(process.env.PORT || 8787);
