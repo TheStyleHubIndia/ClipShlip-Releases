@@ -32,6 +32,31 @@ app.get("/health", (_req, res) => res.json({
   version: "1.1.1"
 }));
 
+app.get("/test-youtube", async (req, res) => {
+  const url = String(req.query?.url || "").trim();
+  if (!/^https?:\\/\\/(www\\.)?(youtube\\.com|youtu\\.be)\\//i.test(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
+  const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
+  const cleanup = () => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); };
+  const fail = (stage, detail="") => { cleanup(); if(!res.headersSent) res.status(500).json({ok:false,stage,detail:detail.slice(-4000)}); };
+  const dl = spawn("yt-dlp", ["--no-playlist","--js-runtimes","node","--remote-components","ejs:github","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections","*0-10","--force-keyframes-at-cuts","-o",source,url]);
+  let ds=""; dl.stderr.on("data",c=>{ds+=c.toString();});
+  dl.on("error",()=>fail("yt-dlp-start"));
+  dl.on("close",code=>{
+    if(code!==0) return fail("youtube-download",ds);
+    const ff = spawn("ffmpeg",["-hide_banner","-loglevel","error","-i",source,"-t","10","-vf","scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920","-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output]);
+    let fsErr=""; ff.stderr.on("data",c=>{fsErr+=c.toString();});
+    ff.on("error",()=>fail("ffmpeg-start",fsErr));
+    ff.on("close",code2=>{
+      if(code2!==0) return fail("render",fsErr);
+      let bytes=0; try { bytes=fs.statSync(output).size; } catch {}
+      const valid=bytes>10000;
+      cleanup();
+      if(!valid) return res.status(500).json({ok:false,stage:"output-validation",bytes});
+      res.json({ok:true,clip:"10s",width:1080,height:1920,bytes,format:"mp4"});
+    });
+  });
+});
+
 app.post("/render-youtube", express.json(), async (req, res) => {
   const url = String(req.body?.url || "").trim();
   const start = Number(req.body?.start ?? 0);
