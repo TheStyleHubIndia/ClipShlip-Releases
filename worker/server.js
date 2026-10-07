@@ -83,7 +83,7 @@ app.get("/health", (_req, res) => res.json({
   ffmpeg: "available",
   youtube: "best-effort",
   selfTest,
-  version: "1.4.0"
+  version: "1.5.0"
 }));
 
 // Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
@@ -141,6 +141,51 @@ app.post("/render", upload.single("video"), async (req, res) => {
   });
 });
 
+async function downloadViaCobalt(url, source, start, end) {
+  const base = String(process.env.COBALT_URL || "").trim().replace(/\/$/, "");
+  if (!base) return { ok: false, diagnostics: "COBALT_URL not configured" };
+  try {
+    const response = await fetch(base + "/", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        downloadMode: "auto",
+        videoQuality: "1080",
+        youtubeVideoCodec: "h264",
+        youtubeVideoContainer: "mp4",
+        alwaysProxy: true
+      }),
+      signal: AbortSignal.timeout(120000)
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload) return { ok: false, diagnostics: `Cobalt HTTP ${response.status}: ${JSON.stringify(payload)}` };
+    if (payload.status !== "redirect" && payload.status !== "tunnel") {
+      return { ok: false, diagnostics: `Cobalt status ${payload.status || "unknown"}: ${JSON.stringify(payload).slice(0,4000)}` };
+    }
+    const mediaUrl = payload.url;
+    if (!mediaUrl) return { ok: false, diagnostics: "Cobalt returned no media URL" };
+    const media = await fetch(mediaUrl, { signal: AbortSignal.timeout(10 * 60 * 1000) });
+    if (!media.ok || !media.body) return { ok: false, diagnostics: `Cobalt media HTTP ${media.status}` };
+    const handle = fs.createWriteStream(source);
+    await new Promise((resolve, reject) => {
+      media.body.pipeTo(new WritableStream({
+        write(chunk) { return new Promise((r,j) => handle.write(Buffer.from(chunk), e => e ? j(e) : r())); },
+        close() { handle.end(resolve); },
+        abort(err) { handle.destroy(err); reject(err); }
+      })).catch(reject);
+    });
+    if (fs.existsSync(source) && fs.statSync(source).size > 10000) {
+      return { ok: true, diagnostics: `Cobalt ${payload.status}: ${fs.statSync(source).size} bytes` };
+    }
+    cleanup(source);
+    return { ok: false, diagnostics: "Cobalt returned an empty/invalid file" };
+  } catch (error) {
+    cleanup(source);
+    return { ok: false, diagnostics: `Cobalt exception: ${String(error)}` };
+  }
+}
+
 async function downloadYouTube(url, source, start, end) {
   const common = [
     "--no-playlist",
@@ -189,7 +234,8 @@ app.post("/render-youtube", async (req, res) => {
   const id = crypto.randomUUID();
   const source = path.join(root, id + "-source.mp4");
   const output = path.join(root, id + ".mp4");
-  const downloaded = await downloadYouTube(url, source, start, end);
+  const cobalt = await downloadViaCobalt(url, source, start, end);
+  const downloaded = cobalt.ok ? cobalt : await downloadYouTube(url, source, start, end);
   if (!downloaded.ok) {
     cleanup(source, output);
     return res.status(502).json({
