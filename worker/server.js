@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import multer from "multer";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,6 +12,14 @@ const root = path.join(__dirname, "tmp");
 fs.mkdirSync(root, { recursive: true });
 
 const app = express();
+const allowedOrigin = process.env.WORKER_ALLOWED_ORIGIN || "*";
+app.use(cors({
+  origin: allowedOrigin === "*" ? true : allowedOrigin.split(",").map(v => v.trim()),
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
+}));
+app.disable("x-powered-by");
+
 const upload = multer({
   dest: root,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }
@@ -19,7 +28,8 @@ const upload = multer({
 app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "autoshorts-worker",
-  ffmpeg: "required"
+  ffmpeg: "available",
+  version: "1.1.0"
 }));
 
 app.post("/render", upload.single("video"), async (req, res) => {
@@ -36,15 +46,7 @@ app.post("/render", upload.single("video"), async (req, res) => {
   const id = crypto.randomUUID();
   const output = path.join(root, `${id}.mp4`);
   const filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920";
-  const args = [
-    "-hide_banner","-loglevel","error",
-    "-ss", String(start), "-i", req.file.path,
-    "-t", String(duration),
-    "-vf", filter,
-    "-c:v","libx264","-preset","veryfast","-crf","20",
-    "-c:a","aac","-b:a","160k",
-    "-movflags","+faststart","-y",output
-  ];
+  const args = ["-hide_banner","-loglevel","error","-ss",String(start),"-i",req.file.path,"-t",String(duration),"-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output];
 
   const ffmpeg = spawn("ffmpeg", args);
   let stderr = "";
@@ -52,7 +54,7 @@ app.post("/render", upload.single("video"), async (req, res) => {
 
   ffmpeg.on("error", () => {
     fs.rmSync(req.file.path, { force: true });
-    res.status(500).json({ error: "FFmpeg is not installed or could not start" });
+    if (!res.headersSent) res.status(500).json({ error: "FFmpeg is not installed or could not start" });
   });
 
   ffmpeg.on("close", code => {
