@@ -83,7 +83,7 @@ app.get("/health", (_req, res) => res.json({
   ffmpeg: "available",
   youtube: "best-effort",
   selfTest,
-  version: "1.3.0"
+  version: "1.3.1"
 }));
 
 // Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
@@ -239,5 +239,38 @@ app.get("/test-youtube", async (req, res) => {
   res.json({ ok: true, clip: "10s", width: 1080, height: 1920, bytes, format: "mp4" });
 });
 
+async function runStartupSelfTest() {
+  const id = crypto.randomUUID();
+  const output = path.join(root, id + "-selftest.mp4");
+  const started = Date.now();
+  const result = await run("ffmpeg", [
+    "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=10",
+    "-frames:v", "1",
+    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+    "-an",
+    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+    "-y", output
+  ], 30000);
+  if (!result.ok || !fs.existsSync(output)) {
+    selfTest = { status: "failed", elapsedMs: Date.now() - started, detail: result.stderr.slice(-1500) };
+    cleanup(output);
+    console.error("AutoShorts FFmpeg self-test FAILED", selfTest);
+    return;
+  }
+  const bytes = fs.statSync(output).size;
+  cleanup(output);
+  selfTest = bytes > 10000
+    ? { status: "pass", elapsedMs: Date.now() - started, bytes, width: 1080, height: 1920, format: "mp4" }
+    : { status: "failed", elapsedMs: Date.now() - started, bytes };
+  console.log("AutoShorts FFmpeg self-test", selfTest);
+}
+
 const port = Number(process.env.PORT || 8787);
-app.listen(port, () => console.log(`AutoShorts worker listening on :${port}`));
+app.listen(port, () => {
+  console.log(`AutoShorts worker listening on :${port}`);
+  runStartupSelfTest().catch(err => {
+    selfTest = { status: "failed", detail: String(err) };
+    console.error("AutoShorts FFmpeg self-test exception", err);
+  });
+});
