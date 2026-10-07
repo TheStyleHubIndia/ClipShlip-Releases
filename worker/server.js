@@ -38,11 +38,25 @@ app.get("/test-youtube", async (req, res) => {
   const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
   const cleanup = () => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); };
   const fail = (stage, detail="") => { cleanup(); if(!res.headersSent) res.status(500).json({ok:false,stage,detail:detail.slice(-4000)}); };
-  const dl = spawn("yt-dlp", ["--no-playlist","--js-runtimes","node","--remote-components","ejs:github","--extractor-args","youtube:player_client=web_embedded,web,tv","--user-agent","Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36","--force-ipv4","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections","*0-10","--force-keyframes-at-cuts","-o",source,url]);
-  let ds=""; dl.stderr.on("data",c=>{ds+=c.toString();});
-  dl.on("error",()=>fail("yt-dlp-start"));
-  dl.on("close",code=>{
-    if(code!==0) return fail("youtube-download",ds);
+  const clients = ["web_embedded,web,tv","web_safari,web_embedded","android,web_safari"];
+  let ds = "";
+  let downloaded = false;
+  for (let attempt = 0; attempt < 2 && !downloaded; attempt++) {
+    for (const client of clients) {
+      const args = ["--no-playlist","--js-runtimes","node","--remote-components","ejs:github","--extractor-args",`youtube:player_client=${client}`,"--user-agent","Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36","--force-ipv4","--retries","2","--fragment-retries","2","--sleep-requests","1","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections","*0-10","--force-keyframes-at-cuts","-o",source,url];
+      const result = await new Promise(resolve => {
+        const dl = spawn("yt-dlp", args);
+        let err = "";
+        dl.stderr.on("data", c => { err += c.toString(); });
+        dl.on("error", e => resolve({ok:false, detail:String(e)}));
+        dl.on("close", code => resolve({ok:code === 0, detail:err}));
+      });
+      ds += `[attempt ${attempt + 1} client ${client}]\n${result.detail || ""}\n`;
+      if (result.ok && fs.existsSync(source) && fs.statSync(source).size > 10000) { downloaded = true; break; }
+      fs.rmSync(source,{force:true});
+    }
+  }
+  if (!downloaded) return fail("youtube-download",ds);
     const ff = spawn("ffmpeg",["-hide_banner","-loglevel","error","-i",source,"-t","10","-vf","scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920","-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output]);
     let fsErr=""; ff.stderr.on("data",c=>{fsErr+=c.toString();});
     ff.on("error",()=>fail("ffmpeg-start",fsErr));
