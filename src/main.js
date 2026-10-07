@@ -41,11 +41,28 @@ const input=document.querySelector("#videoInput"), choose=document.querySelector
 const fileName=document.querySelector("#fileName"), results=document.querySelector("#results"), candidateList=document.querySelector("#candidateList");
 const meta=document.querySelector("#meta"), status=document.querySelector("#status"), workerUrl=document.querySelector("#workerUrl"), youtubeUrl=document.querySelector("#youtubeUrl"), youtubeTest=document.querySelector("#youtubeTest");
 
-const configuredWorker = import.meta.env.VITE_WORKER_URL?.trim().replace(/\/$/,"") || "https://autoshorts-worker-production.up.railway.app";
-workerUrl.value=localStorage.getItem("autoshorts_worker_url")||configuredWorker;
+const workerCandidates = [
+  import.meta.env.VITE_WORKER_URL?.trim().replace(/\/$/,""),
+  localStorage.getItem("autoshorts_worker_url")?.trim().replace(/\/$/,""),
+  "https://autoshorts-worker.onrender.com",
+  "https://autoshorts-worker-production.up.railway.app"
+].filter(Boolean).filter((url,index,all)=>all.indexOf(url)===index);
+workerUrl.value=localStorage.getItem("autoshorts_worker_url")||workerCandidates[0]||"";
 workerUrl.addEventListener("input",()=>localStorage.setItem("autoshorts_worker_url",workerUrl.value.trim()));
-async function checkWorker(url){ try { const r=await fetch(`${url}/health`); return r.ok; } catch { return false; } }
-if(workerUrl.value){ status.textContent="Checking render worker…"; checkWorker(workerUrl.value.trim().replace(/\/$/,"")).then(ok=>{ status.textContent=ok?"Worker online — rendering enabled.":"Worker not reachable — local analysis still works."; }); }
+async function checkWorker(url){ try { const r=await fetch(`${url}/health`,{cache:"no-store"}); return r.ok; } catch { return false; } }
+async function selectHealthyWorker(){
+  status.textContent="Checking render workers…";
+  for(const candidate of workerCandidates){
+    if(await checkWorker(candidate)){
+      workerUrl.value=candidate;
+      status.textContent="Worker online — rendering enabled.";
+      return candidate;
+    }
+  }
+  status.textContent="No render worker reachable — local analysis still works.";
+  return "";
+}
+selectHealthyWorker();
 choose.addEventListener("click",()=>input.click());
 input.addEventListener("change",()=>input.files[0]&&analyze(input.files[0]));
 ["dragenter","dragover"].forEach(e=>dropzone.addEventListener(e,x=>{x.preventDefault();dropzone.classList.add("dragging")}));
