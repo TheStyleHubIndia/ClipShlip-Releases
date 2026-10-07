@@ -41,8 +41,11 @@ const input=document.querySelector("#videoInput"), choose=document.querySelector
 const fileName=document.querySelector("#fileName"), results=document.querySelector("#results"), candidateList=document.querySelector("#candidateList");
 const meta=document.querySelector("#meta"), status=document.querySelector("#status"), workerUrl=document.querySelector("#workerUrl");
 
-workerUrl.value=localStorage.getItem("autoshorts_worker_url")||"";
+const configuredWorker = import.meta.env.VITE_WORKER_URL?.trim().replace(/\/$/,"") || "";
+workerUrl.value=localStorage.getItem("autoshorts_worker_url")||configuredWorker;
 workerUrl.addEventListener("input",()=>localStorage.setItem("autoshorts_worker_url",workerUrl.value.trim()));
+async function checkWorker(url){ try { const r=await fetch(`${url}/health`); return r.ok; } catch { return false; } }
+if(workerUrl.value){ status.textContent="Checking render worker…"; checkWorker(workerUrl.value.trim().replace(/\/$/,"")).then(ok=>{ status.textContent=ok?"Worker online — rendering enabled.":"Worker not reachable — local analysis still works."; }); }
 choose.addEventListener("click",()=>input.click());
 input.addEventListener("change",()=>input.files[0]&&analyze(input.files[0]));
 ["dragenter","dragover"].forEach(e=>dropzone.addEventListener(e,x=>{x.preventDefault();dropzone.classList.add("dragging")}));
