@@ -12,6 +12,7 @@ const root = path.join(__dirname, "tmp");
 fs.mkdirSync(root, { recursive: true });
 
 const app = express();
+let selfTest = { status: "starting" };
 const allowedOrigin = process.env.WORKER_ALLOWED_ORIGIN || "*";
 app.use(cors({
   origin: allowedOrigin === "*" ? true : allowedOrigin.split(",").map(v => v.trim()),
@@ -81,7 +82,8 @@ app.get("/health", (_req, res) => res.json({
   service: "autoshorts-worker",
   ffmpeg: "available",
   youtube: "best-effort",
-  version: "1.2.0"
+  selfTest,
+  version: "1.3.0"
 }));
 
 // Pipeline-only smoke test: proves FFmpeg can create a real 1080x1920 MP4
