@@ -38,7 +38,7 @@ app.get("/test-youtube", async (req, res) => {
   const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
   const cleanup = () => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); };
   const fail = (stage, detail="") => { cleanup(); if(!res.headersSent) res.status(500).json({ok:false,stage,detail:detail.slice(-4000)}); };
-  const dl = spawn("yt-dlp", ["--no-playlist","--js-runtimes","node","--remote-components","ejs:github","--extractor-args","youtube:player_client=android,web_safari","--user-agent","Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections","*0-10","--force-keyframes-at-cuts","-o",source,url]);
+  const dl = spawn("yt-dlp", ["--no-playlist","--js-runtimes","node","--remote-components","ejs:github","--extractor-args","youtube:player_client=web_embedded,web_safari","--user-agent","Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36","--force-ipv4","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections","*0-10","--force-keyframes-at-cuts","-o",source,url]);
   let ds=""; dl.stderr.on("data",c=>{ds+=c.toString();});
   dl.on("error",()=>fail("yt-dlp-start"));
   dl.on("close",code=>{
