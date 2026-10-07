@@ -1,0 +1,59 @@
+name: AutoShorts Worker Smoke Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Render worker
+        run: |
+          for i in {1..30}; do
+            code=$(curl -sS -o /tmp/health.json -w "%{http_code}" https://autoshorts-worker.onrender.com/health || true)
+            echo "health attempt $i -> $code"
+            if [ "$code" = "200" ]; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Worker health endpoint did not become ready"
+          exit 1
+
+      - name: Test real FFmpeg render
+        run: |
+          curl -fsS --max-time 180 https://autoshorts-worker.onrender.com/test-render -o /tmp/test-render.json
+          cat /tmp/test-render.json
+          node -e "const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/test-render.json','utf8')); if(!x.ok || !x.output || !x.output.endsWith('.mp4') || !(x.size>10000)) process.exit(1); console.log('FFmpeg smoke test PASS:', x.size, 'bytes');"
+
+      - name: Test YouTube ingest
+        env:
+          YOUTUBE_URL: https://youtu.be/vNvCQpGYdLo
+        run: |
+          set +e
+          curl -sS --max-time 300 --get             --data-urlencode "url=$YOUTUBE_URL"             "https://autoshorts-worker.onrender.com/test-youtube"             -o /tmp/test-youtube.json             -w "HTTP %{http_code}\n"
+          cat /tmp/test-youtube.json || true
+          node - <<'NODE'
+          const fs=require('fs');
+          const p='/tmp/test-youtube.json';
+          if(!fs.existsSync(p)) process.exit(1);
+          const raw=fs.readFileSync(p,'utf8');
+          try {
+            const x=JSON.parse(raw);
+            if (x.ok && x.output && x.output.endsWith('.mp4') && x.size>10000) {
+              console.log('YouTube smoke test PASS:', x.size, 'bytes');
+              process.exit(0);
+            }
+            console.log('YouTube ingest currently unavailable:', x.code || x.error || 'unknown');
+            process.exit(2);
+          } catch {
+            console.log('YouTube endpoint returned non-JSON');
+            process.exit(2);
+          }
+          NODE
