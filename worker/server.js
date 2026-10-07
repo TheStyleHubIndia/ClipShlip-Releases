@@ -280,6 +280,31 @@ app.get("/test-cobalt", async (req, res) => {
   }
 });
 
+app.get("/test-youtube-fixed", async (req, res) => {
+  const url = String(process.env.TEST_YOUTUBE_URL || "").trim();
+  if (!isYouTubeUrl(url)) return res.status(500).json({ ok: false, error: "TEST_YOUTUBE_URL is not configured" });
+  const id = crypto.randomUUID();
+  const source = path.join(root, id + "-source.mp4");
+  const output = path.join(root, id + ".mp4");
+  const cobalt = await downloadViaCobalt(url, source, 0, 10);
+  const downloaded = cobalt.ok ? cobalt : await downloadYouTube(url, source, 0, 10);
+  if (!downloaded.ok) {
+    cleanup(source, output);
+    return res.status(502).json({ ok: false, stage: "youtube-download", code: "YOUTUBE_INGEST_BLOCKED", detail: downloaded.diagnostics.slice(-8000) });
+  }
+  const rendered = await run("ffmpeg", renderArgs(source, output, 10), 10 * 60 * 1000);
+  cleanup(source);
+  if (!rendered.ok) {
+    cleanup(output);
+    return res.status(500).json({ ok: false, stage: "render", detail: rendered.stderr.slice(-3000) });
+  }
+  let bytes = 0;
+  try { bytes = fs.statSync(output).size; } catch {}
+  cleanup(output);
+  if (bytes <= 10000) return res.status(500).json({ ok: false, stage: "output-validation", bytes });
+  res.json({ ok: true, clip: "10s", width: 1080, height: 1920, bytes, format: "mp4", source: "cobalt-or-ytdlp" });
+});
+
 app.get("/test-youtube", async (req, res) => {
   const url = String(req.query?.url || "").trim();
   if (!isYouTubeUrl(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
