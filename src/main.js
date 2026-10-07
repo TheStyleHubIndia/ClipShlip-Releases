@@ -18,7 +18,7 @@ app.innerHTML = `
       <div id="fileName" class="file-name"></div>
     </section>
 
-    <section class="settings">
+    <section class="settings"><label>YouTube URL <input id="youtubeUrl" placeholder="https://youtu.be/..." /></label><button id="youtubeTest" type="button">Test YouTube → 30s Short</button><span>Downloads a 30-second section through the render worker.</span></section>\n\n    <section class="settings">
       <label>Worker URL <input id="workerUrl" placeholder="https://your-worker.example.com" /></label>
       <span>Optional — leave empty to keep processing in-browser only.</span>
     </section>
@@ -39,7 +39,7 @@ app.innerHTML = `
 
 const input=document.querySelector("#videoInput"), choose=document.querySelector("#chooseBtn"), dropzone=document.querySelector("#dropzone");
 const fileName=document.querySelector("#fileName"), results=document.querySelector("#results"), candidateList=document.querySelector("#candidateList");
-const meta=document.querySelector("#meta"), status=document.querySelector("#status"), workerUrl=document.querySelector("#workerUrl");
+const meta=document.querySelector("#meta"), status=document.querySelector("#status"), workerUrl=document.querySelector("#workerUrl"), youtubeUrl=document.querySelector("#youtubeUrl"), youtubeTest=document.querySelector("#youtubeTest");
 
 const configuredWorker = import.meta.env.VITE_WORKER_URL?.trim().replace(/\/$/,"") || "https://autoshorts-worker.onrender.com";
 workerUrl.value=localStorage.getItem("autoshorts_worker_url")||configuredWorker;
@@ -80,4 +80,18 @@ candidateList.addEventListener("click",async e=>{
    a.href=url;a.download="autoshorts-1080x1920.mp4";a.click();URL.revokeObjectURL(url);
    status.textContent="Render complete — MP4 download started.";
  }catch(err){status.textContent=`Render failed: ${err.message||"worker unavailable"}`;b.disabled=false;b.textContent="Retry render"}
+});
+
+youtubeTest.addEventListener("click",async()=>{
+  const worker=workerUrl.value.trim().replace(/\/$/,""), url=youtubeUrl.value.trim();
+  if(!worker){status.textContent="Worker URL missing.";return}
+  if(!url){status.textContent="Paste a YouTube URL first.";return}
+  youtubeTest.disabled=true; youtubeTest.textContent="Testing…"; status.textContent="Downloading YouTube section and rendering 9:16…";
+  try{
+    const r=await fetch(`${worker}/render-youtube`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,start:0,end:30})});
+    if(!r.ok) throw new Error(await r.text());
+    const blob=await r.blob(), u=URL.createObjectURL(blob), a=document.createElement("a"); a.href=u; a.download="autoshorts-youtube-1080x1920.mp4"; a.click(); URL.revokeObjectURL(u);
+    status.textContent="YouTube test passed — MP4 download started.";
+  }catch(e){status.textContent=`YouTube test failed: ${e.message||"worker error"}`}
+  finally{youtubeTest.disabled=false;youtubeTest.textContent="Test YouTube → 30s Short"}
 });
