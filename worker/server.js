@@ -32,6 +32,32 @@ app.get("/health", (_req, res) => res.json({
   version: "1.1.0"
 }));
 
+app.post("/render-youtube", express.json(), async (req, res) => {
+  const url = String(req.body?.url || "").trim();
+  const start = Number(req.body?.start ?? 0);
+  const end = Number(req.body?.end ?? 30);
+  const duration = end - start;
+  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) return res.status(400).json({ error: "valid YouTube URL is required" });
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || duration <= 0 || duration > 180) return res.status(400).json({ error: "invalid clip range (max 180 seconds)" });
+  const id = crypto.randomUUID(), source = path.join(root, `${id}-source.mp4`), output = path.join(root, `${id}.mp4`);
+  const dl = spawn("yt-dlp", ["--no-playlist","-f","bv*+ba/b","--merge-output-format","mp4","--download-sections",`*${start}-${end}`,"--force-keyframes-at-cuts","-o",source,url]);
+  let stderr = ""; dl.stderr.on("data", c => { stderr += c.toString(); });
+  const fail = (msg, detail="") => { fs.rmSync(source,{force:true}); fs.rmSync(output,{force:true}); if(!res.headersSent) res.status(500).json({error:msg,detail:detail.slice(-2000)}); };
+  dl.on("error", () => fail("yt-dlp could not start"));
+  dl.on("close", code => {
+    if (code !== 0) return fail("YouTube download failed", stderr);
+    const filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920";
+    const ffmpeg = spawn("ffmpeg", ["-hide_banner","-loglevel","error","-i",source,"-t",String(duration),"-vf",filter,"-c:v","libx264","-preset","veryfast","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart","-y",output]);
+    let ferr=""; ffmpeg.stderr.on("data", c => { ferr += c.toString(); });
+    ffmpeg.on("error", () => fail("FFmpeg could not start", ferr));
+    ffmpeg.on("close", code2 => {
+      fs.rmSync(source,{force:true});
+      if(code2!==0) return fail("render failed",ferr);
+      res.download(output,"autoshorts-youtube-1080x1920.mp4",err=>{fs.rmSync(output,{force:true});if(err&&!res.headersSent)res.status(500).end();});
+    });
+  });
+});
+
 app.post("/render", upload.single("video"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video file is required" });
 
