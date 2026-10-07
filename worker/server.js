@@ -267,7 +267,7 @@ async function runStartupSelfTest() {
 }
 
 const port = Number(process.env.PORT || 8787);
-app.listen(port, () => {
+app.listen(port, "0.0.0.0", () => {
   console.log(`AutoShorts worker listening on :${port}`);
   runStartupSelfTest().catch(err => {
     selfTest = { status: "failed", detail: String(err) };
