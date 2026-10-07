@@ -5,5 +5,7 @@ COPY worker/package.json ./
 RUN npm install --omit=dev
 COPY worker/server.js ./
 RUN mkdir -p /app/tmp
+ENV PORT=8787
+ENV HOSTNAME=0.0.0.0
 EXPOSE 8787
-CMD ["npm","start"]
+CMD ["node","server.js"]
